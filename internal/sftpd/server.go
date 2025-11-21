@@ -1235,7 +1235,7 @@ func (c *Configuration) validateKeyboardInteractiveCredentials(conn ssh.ConnMeta
 }
 
 func updateLoginMetrics(user *dataprovider.User, ip, method string, err error) {
-	metric.AddLoginAttempt(method)
+	metric.AddLoginAttempt(method, user.Username)
 	if err == nil {
 		plugin.Handler.NotifyLogEvent(notifier.LogEventTypeLoginOK, common.ProtocolSSH, user.Username, ip, "", err)
 		common.DelayLogin(nil)
@@ -1258,7 +1258,7 @@ func updateLoginMetrics(user *dataprovider.User, ip, method string, err error) {
 			}
 		}
 	}
-	metric.AddLoginResult(method, err)
+	metric.AddLoginResult(method, err, user.Username)
 	dataprovider.ExecutePostLoginHook(user, method, ip, common.ProtocolSSH, err)
 }
 

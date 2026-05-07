@@ -463,6 +463,7 @@ type ActiveTransfer interface {
 	GetDownloadedSize() int64
 	GetUploadedSize() int64
 	GetVirtualPath() string
+	GetFsPath() string
 	GetStartTime() time.Time
 	SignalClose(err error)
 	Truncate(fsPath string, size int64) (int64, error)
@@ -1161,7 +1162,7 @@ func (conns *ActiveConnections) checkIdles() {
 				logger.Debug(conn.GetProtocol(), conn.GetID(), "close idle connection, idle time: %s, username: %q close err: %v",
 					time.Since(conn.GetLastActivity()), conn.GetUsername(), err)
 			}(c)
-		} else if !c.isAccessAllowed() {
+		} else if !isUnauthenticatedFTPUser && !c.isAccessAllowed() {
 			defer func(conn ActiveConnection) {
 				err := conn.Disconnect()
 				logger.Info(conn.GetProtocol(), conn.GetID(), "access conditions not met for user: %q close connection err: %v",

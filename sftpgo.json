@@ -205,6 +205,7 @@
     "port": 0,
     "username": "",
     "password": "",
+    "password_file": "",
     "sslmode": 0,
     "disable_sni": false,
     "target_session_attrs": "",
@@ -283,6 +284,7 @@
         "client_ip_header_depth": 0,
         "hide_login_url": 0,
         "render_openapi": true,
+        "base_url": "",
         "languages": [
           "en"
         ],

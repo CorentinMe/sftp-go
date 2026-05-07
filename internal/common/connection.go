@@ -296,6 +296,20 @@ func (c *BaseConnection) setTimes(fsPath string, atime time.Time, mtime time.Tim
 	return false
 }
 
+// getInfoForOngoingUpload returns upload statistics for an upload currently in
+// progress on this connection.
+func (c *BaseConnection) getInfoForOngoingUpload(fsPath string) (os.FileInfo, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	for _, t := range c.activeTransfers {
+		if t.GetType() == TransferUpload && t.GetFsPath() == fsPath {
+			return vfs.NewFileInfo(t.GetVirtualPath(), false, t.GetSize(), t.GetStartTime(), false), nil
+		}
+	}
+	return nil, os.ErrNotExist
+}
+
 func (c *BaseConnection) truncateOpenHandle(fsPath string, size int64) (int64, error) {
 	c.RLock()
 	defer c.RUnlock()
@@ -780,9 +794,8 @@ func (c *BaseConnection) Copy(virtualSourcePath, virtualTargetPath string) error
 	if err := c.CheckParentDirs(path.Dir(destPath)); err != nil {
 		return err
 	}
-	done := make(chan bool)
-	defer close(done)
-	go keepConnectionAlive(c, done, 2*time.Minute)
+	stopKeepAlive := keepConnectionAlive(c, 2*time.Minute)
+	defer stopKeepAlive()
 
 	return c.doRecursiveCopy(virtualSourcePath, destPath, srcInfo, createTargetDir, 0)
 }
@@ -848,9 +861,8 @@ func (c *BaseConnection) renameInternal(virtualSourcePath, virtualTargetPath str
 	if checkParentDestination {
 		c.CheckParentDirs(path.Dir(virtualTargetPath)) //nolint:errcheck
 	}
-	done := make(chan bool)
-	defer close(done)
-	go keepConnectionAlive(c, done, 2*time.Minute)
+	stopKeepAlive := keepConnectionAlive(c, 2*time.Minute)
+	defer stopKeepAlive()
 
 	files, size, err := fsDst.Rename(fsSourcePath, fsTargetPath, checks)
 	if err != nil {
@@ -954,7 +966,19 @@ func (c *BaseConnection) doStatInternal(virtualPath string, mode int, checkFileP
 		info, err = fs.Stat(c.getRealFsPath(fsPath))
 	}
 	if err != nil {
-		if !fs.IsNotExist(err) {
+		isNotExist := fs.IsNotExist(err)
+		if isNotExist {
+			// This is primarily useful for atomic storage backends, where files
+			// become visible only after they are closed. However, since we may
+			// be proxying (for example) an SFTP server backed by atomic
+			// storage, and this search only inspects transfers active on the
+			// current connection (typically just one), the check is inexpensive
+			// and safe to perform unconditionally.
+			if info, err := c.getInfoForOngoingUpload(fsPath); err == nil {
+				return info, nil
+			}
+		}
+		if !isNotExist {
 			c.Log(logger.LevelWarn, "stat error for path %q: %+v", virtualPath, err)
 		}
 		return nil, c.GetFsError(fs, err)
@@ -1869,18 +1893,22 @@ func getPermissionDeniedError(protocol string) error {
 	}
 }
 
-func keepConnectionAlive(c *BaseConnection, done chan bool, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer func() {
-		ticker.Stop()
-	}()
+func keepConnectionAlive(c *BaseConnection, interval time.Duration) func() {
+	var timer *time.Timer
+	var closed atomic.Bool
 
-	for {
-		select {
-		case <-done:
-			return
-		case <-ticker.C:
-			c.UpdateLastActivity()
+	task := func() {
+		c.UpdateLastActivity()
+
+		if !closed.Load() {
+			timer.Reset(interval)
 		}
+	}
+
+	timer = time.AfterFunc(interval, task)
+
+	return func() {
+		closed.Store(true)
+		timer.Stop()
 	}
 }

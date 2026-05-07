@@ -1253,6 +1253,15 @@ func (a *BaseEventAction) validate() error {
 	if a.Name == "" {
 		return util.NewI18nError(util.NewValidationError("name is mandatory"), util.I18nErrorNameRequired)
 	}
+	if !util.IsNameValid(a.Name) {
+		return util.NewI18nError(errInvalidInput, util.I18nErrorInvalidInput)
+	}
+	if config.NamingRules&1 == 0 && !usernameRegex.MatchString(a.Name) {
+		return util.NewI18nError(
+			util.NewValidationError(fmt.Sprintf("name %q is not valid, the following characters are allowed: a-zA-Z0-9-_.~", a.Name)),
+			util.I18nErrorInvalidUser,
+		)
+	}
 	if !isActionTypeValid(a.Type) {
 		return util.NewValidationError(fmt.Sprintf("invalid action type: %d", a.Type))
 	}
@@ -1672,9 +1681,18 @@ func (r *EventRule) isStatusValid() bool {
 	return r.Status >= 0 && r.Status <= 1
 }
 
-func (r *EventRule) validate() error {
+func (r *EventRule) validate() error { //nolint:gocyclo
 	if r.Name == "" {
 		return util.NewI18nError(util.NewValidationError("name is mandatory"), util.I18nErrorNameRequired)
+	}
+	if !util.IsNameValid(r.Name) {
+		return util.NewI18nError(errInvalidInput, util.I18nErrorInvalidInput)
+	}
+	if config.NamingRules&1 == 0 && !usernameRegex.MatchString(r.Name) {
+		return util.NewI18nError(
+			util.NewValidationError(fmt.Sprintf("name %q is not valid, the following characters are allowed: a-zA-Z0-9-_.~", r.Name)),
+			util.I18nErrorInvalidUser,
+		)
 	}
 	if !r.isStatusValid() {
 		return util.NewValidationError(fmt.Sprintf("invalid event rule status: %d", r.Status))

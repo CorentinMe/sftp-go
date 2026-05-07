@@ -99,7 +99,7 @@ func NewGCSFs(connectionID, localTempDir, mountPath string, config GCSFsConfig) 
 		fs.svc, err = storage.NewClient(ctx,
 			storage.WithJSONReads(),
 			option.WithUserAgent(version.GetVersionHash()),
-			option.WithCredentialsJSON([]byte(fs.config.Credentials.GetPayload())),
+			option.WithAuthCredentialsJSON(option.ServiceAccount, []byte(fs.config.Credentials.GetPayload())),
 		)
 	}
 	return fs, err
@@ -638,11 +638,11 @@ func (*GCSFs) HasVirtualFolders() bool {
 // ResolvePath returns the matching filesystem path for the specified virtual path
 func (fs *GCSFs) ResolvePath(virtualPath string) (string, error) {
 	if fs.mountPath != "" {
-		virtualPath = strings.TrimPrefix(virtualPath, fs.mountPath)
+		if after, found := strings.CutPrefix(virtualPath, fs.mountPath); found {
+			virtualPath = after
+		}
 	}
-	if !path.IsAbs(virtualPath) {
-		virtualPath = path.Clean("/" + virtualPath)
-	}
+	virtualPath = path.Clean("/" + virtualPath)
 	return fs.Join(fs.config.KeyPrefix, strings.TrimPrefix(virtualPath, "/")), nil
 }
 

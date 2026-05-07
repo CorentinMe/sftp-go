@@ -1414,7 +1414,7 @@ func TestCreateShareCookieError(t *testing.T) {
 	err := dataprovider.AddUser(user, "", "", "")
 	assert.NoError(t, err)
 	share := &dataprovider.Share{
-		Name:     "test share cookie error",
+		Name:     "test_share_cookie_error",
 		ShareID:  util.GenerateUniqueID(),
 		Scope:    dataprovider.ShareScopeRead,
 		Password: pwd,
@@ -3372,6 +3372,25 @@ func TestResetCodesCleanup(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestResetCodeExpiredGet(t *testing.T) {
+	mgr := &memoryResetCodeManager{}
+	rc := newResetCode(util.GenerateUniqueID(), false)
+	err := mgr.Add(rc)
+	assert.NoError(t, err)
+	// valid code is returned
+	result, err := mgr.Get(rc.Code)
+	assert.NoError(t, err)
+	assert.Equal(t, rc.Code, result.Code)
+	// expire the code
+	rc.ExpiresAt = time.Now().Add(-1 * time.Minute).UTC()
+	// expired code must not be returned
+	_, err = mgr.Get(rc.Code)
+	assert.Error(t, err)
+	// the expired code must be eagerly removed from the store
+	_, loaded := mgr.resetCodes.Load(rc.Code)
+	assert.False(t, loaded)
+}
+
 func TestUserCanResetPassword(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, webClientLoginPath, nil)
 	assert.NoError(t, err)
@@ -4245,6 +4264,80 @@ func TestConvertEnabledLoginMethods(t *testing.T) {
 	b.EnabledLoginMethods = 15
 	b.convertLoginMethods()
 	assert.Equal(t, 0, b.DisabledLoginMethods)
+}
+
+func TestValidateBaseURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		inputURL    string
+		expectedURL string
+		expectErr   bool
+	}{
+		{
+			name:        "Valid HTTPS URL",
+			inputURL:    "https://sftp.example.com",
+			expectedURL: "https://sftp.example.com",
+			expectErr:   false,
+		},
+		{
+			name:        "Remove trailing slash",
+			inputURL:    "https://sftp.example.com/",
+			expectedURL: "https://sftp.example.com",
+			expectErr:   false,
+		},
+		{
+			name:        "Remove multiple trailing slashes",
+			inputURL:    "http://192.168.1.100:8080///",
+			expectedURL: "http://192.168.1.100:8080",
+			expectErr:   false,
+		},
+		{
+			name:        "Empty BaseURL (optional case)",
+			inputURL:    "",
+			expectedURL: "",
+			expectErr:   false,
+		},
+		{
+			name:      "Unsupported scheme (FTP)",
+			inputURL:  "ftp://files.example.com",
+			expectErr: true,
+		},
+		{
+			name:      "Malformed URL string",
+			inputURL:  "not-a-url",
+			expectErr: true,
+		},
+		{
+			name:      "Missing Host",
+			inputURL:  "https://",
+			expectErr: true,
+		},
+		{
+			name:        "Preserve path without trailing slash",
+			inputURL:    "https://example.com/sftp/",
+			expectedURL: "https://example.com/sftp",
+			expectErr:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &Binding{
+				BaseURL: tt.inputURL,
+			}
+
+			err := b.validateBaseURL()
+
+			if (err != nil) != tt.expectErr {
+				t.Errorf("validateBaseURL() error = %v, expectErr %v", err, tt.expectErr)
+				return
+			}
+
+			if !tt.expectErr && b.BaseURL != tt.expectedURL {
+				t.Errorf("validateBaseURL() got = %v, want %v", b.BaseURL, tt.expectedURL)
+			}
+		})
+	}
 }
 
 func getCSRFTokenFromBody(body io.Reader) (string, error) {

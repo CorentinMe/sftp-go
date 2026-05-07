@@ -39,7 +39,7 @@ import (
 const (
 	oidcCookieKey       = "oidc"
 	adminRoleFieldValue = "admin"
-	authStateValidity   = 1 * 60 * 1000   // 1 minute
+	authStateValidity   = 2 * 60 * 1000   // 2 minutes
 	tokenUpdateInterval = 3 * 60 * 1000   // 3 minutes
 	tokenDeleteInterval = 2 * 3600 * 1000 // 2 hours
 )
@@ -147,13 +147,11 @@ func (o *OIDC) initialize() error {
 	if !slices.Contains(o.Scopes, oidc.ScopeOpenID) {
 		return fmt.Errorf("oidc: required scope %q is not set", oidc.ScopeOpenID)
 	}
-	if o.ClientSecretFile != "" {
-		secret, err := util.ReadConfigFromFile(o.ClientSecretFile, configurationDir)
-		if err != nil {
-			return err
-		}
-		o.ClientSecret = secret
+	secret, err := util.ResolveConfigValue(o.ClientSecret, o.ClientSecretFile, configurationDir)
+	if err != nil {
+		return err
 	}
+	o.ClientSecret = secret
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -200,6 +198,7 @@ type oidcPendingAuth struct {
 	Nonce    string        `json:"nonce"`
 	Audience tokenAudience `json:"audience"`
 	IssuedAt int64         `json:"issued_at"`
+	Verifier string        `json:"verifier"`
 }
 
 func newOIDCPendingAuth(audience tokenAudience) oidcPendingAuth {
@@ -208,6 +207,7 @@ func newOIDCPendingAuth(audience tokenAudience) oidcPendingAuth {
 		Nonce:    util.GenerateOpaqueString(),
 		Audience: audience,
 		IssuedAt: util.GetTimeAsMsSinceEpoch(time.Now()),
+		Verifier: oauth2.GenerateVerifier(),
 	}
 }
 
@@ -595,7 +595,7 @@ func (s *httpdServer) oidcLoginRedirect(w http.ResponseWriter, r *http.Request, 
 	pendingAuth := newOIDCPendingAuth(audience)
 	oidcMgr.addPendingAuth(pendingAuth)
 	http.Redirect(w, r, s.binding.OIDC.oauth2Config.AuthCodeURL(pendingAuth.State,
-		oidc.Nonce(pendingAuth.Nonce)), http.StatusFound)
+		oidc.Nonce(pendingAuth.Nonce), oauth2.S256ChallengeOption(pendingAuth.Verifier)), http.StatusFound)
 }
 
 func (s *httpdServer) debugTokenClaims(claims map[string]any, rawIDToken string) {
@@ -634,7 +634,8 @@ func (s *httpdServer) handleOIDCRedirect(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
-	oauth2Token, err := s.binding.OIDC.oauth2Config.Exchange(ctx, r.URL.Query().Get("code"))
+	oauth2Token, err := s.binding.OIDC.oauth2Config.Exchange(ctx, r.URL.Query().Get("code"),
+		oauth2.VerifierOption(authReq.Verifier))
 	if err != nil {
 		logger.Debug(logSender, "", "failed to exchange oidc token: %v", err)
 		setFlashMessage(w, r, newFlashMessage("Failed to exchange OpenID token", util.I18nOIDCErrTokenExchange))

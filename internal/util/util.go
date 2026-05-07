@@ -163,6 +163,48 @@ func RemoveDuplicates(obj []string, trim bool) []string {
 	return obj[:validIdx]
 }
 
+// IsNameValid validates that a name/username contains only safe characters.
+func IsNameValid(name string) bool {
+	if name == "" {
+		return false
+	}
+	if len(name) > 255 {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return false
+		}
+
+		switch r {
+		case '/', '\\':
+			return false
+		case ':', '*', '?', '"', '<', '>', '|':
+			return false
+		}
+	}
+
+	if name == "." || name == ".." {
+		return false
+	}
+
+	upperName := strings.ToUpper(name)
+	baseName := strings.Split(upperName, ".")[0]
+
+	switch baseName {
+	case "CON", "PRN", "AUX", "NUL",
+		"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		return false
+	}
+
+	if strings.HasSuffix(name, " ") || strings.HasSuffix(name, ".") {
+		return false
+	}
+
+	return true
+}
+
 // GetTimeAsMsSinceEpoch returns unix timestamp as milliseconds from a time struct
 func GetTimeAsMsSinceEpoch(t time.Time) int64 {
 	return t.UnixMilli()
@@ -506,7 +548,7 @@ func CleanPath(p string) string {
 // CleanPathWithBase returns a clean POSIX (/) absolute path to work with.
 // The specified base will be used if the provided path is not absolute
 func CleanPathWithBase(base, p string) string {
-	p = filepath.ToSlash(p)
+	p = strings.ReplaceAll(p, "\\", "/")
 	if !path.IsAbs(p) {
 		p = path.Join(base, p)
 	}
@@ -916,6 +958,18 @@ func ReadConfigFromFile(name, configDir string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(BytesToString(val)), nil
+}
+
+// ResolveConfigValue returns the content of the file at filePath if filePath
+// is non-empty, otherwise it returns value unchanged. This is typically used
+// to allow sensitive configuration values (passwords, secrets) to be loaded
+// from a file (e.g. a Docker/Kubernetes secret mount) instead of being
+// provided inline.
+func ResolveConfigValue(value, filePath, configDir string) (string, error) {
+	if filePath == "" {
+		return value, nil
+	}
+	return ReadConfigFromFile(filePath, configDir)
 }
 
 // SlicesEqual checks if the provided slices contain the same elements,

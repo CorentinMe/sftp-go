@@ -1098,7 +1098,7 @@ func TestMemoryOIDCManager(t *testing.T) {
 	assert.NoError(t, err)
 	oidcMgr.removePendingAuth(authReq.State)
 	require.Len(t, oidcMgr.pendingAuths, 0)
-	authReq.IssuedAt = util.GetTimeAsMsSinceEpoch(time.Now().Add(-61 * time.Second))
+	authReq.IssuedAt = util.GetTimeAsMsSinceEpoch(time.Now().Add(-600 * time.Second))
 	oidcMgr.addPendingAuth(authReq)
 	require.Len(t, oidcMgr.pendingAuths, 1)
 	_, err = oidcMgr.getPendingAuth(authReq.State)
@@ -1184,7 +1184,7 @@ func TestOIDCEvMgrIntegration(t *testing.T) {
 	err = dataprovider.Initialize(newProviderConf, configDir, true)
 	assert.NoError(t, err)
 	// add a special chars to check json replacer
-	username := `test_"oidc_eventmanager`
+	username := `test_'oidc_eventmanager`
 	u := map[string]any{
 		"username": "{{.Name}}",
 		"status":   1,

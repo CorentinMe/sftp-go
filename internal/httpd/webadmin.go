@@ -34,6 +34,7 @@ import (
 
 	"github.com/sftpgo/sdk"
 	sdkkms "github.com/sftpgo/sdk/kms"
+	"golang.org/x/oauth2"
 
 	"github.com/drakkan/sftpgo/v2/internal/acme"
 	"github.com/drakkan/sftpgo/v2/internal/common"
@@ -211,7 +212,8 @@ type profilePage struct {
 
 type changePasswordPage struct {
 	basePage
-	Error *util.I18nError
+	Error          *util.I18nError
+	RequiredAction *util.I18nError
 }
 
 type mfaPage struct {
@@ -223,6 +225,7 @@ type mfaPage struct {
 	SaveTOTPURL      string
 	RecCodesURL      string
 	RequireTwoFactor bool
+	RequiredAction   *util.I18nError
 }
 
 type maintenancePage struct {
@@ -793,6 +796,12 @@ func (s *httpdServer) renderMFAPage(w http.ResponseWriter, r *http.Request) {
 	}
 	data.TOTPConfig = admin.Filters.TOTPConfig
 	data.RequireTwoFactor = admin.Filters.RequireTwoFactor
+	if claims, claimsErr := jwt.FromContext(r.Context()); claimsErr == nil && claims.MustSetTwoFactorAuth {
+		data.RequiredAction = util.NewI18nError(
+			util.NewGenericError("Two-factor authentication setup required"),
+			util.I18nError2FARequiredGeneric,
+		)
+	}
 	renderAdminTemplate(w, templateMFA, data)
 }
 
@@ -818,7 +827,12 @@ func (s *httpdServer) renderChangePasswordPage(w http.ResponseWriter, r *http.Re
 		basePage: s.getBasePageData(util.I18nChangePwdTitle, webChangeAdminPwdPath, w, r),
 		Error:    err,
 	}
-
+	if claims, claimsErr := jwt.FromContext(r.Context()); claimsErr == nil && claims.MustChangePassword {
+		data.RequiredAction = util.NewI18nError(
+			util.NewGenericError("Password change required"),
+			util.I18nErrorChangePwdRequired,
+		)
+	}
 	renderAdminTemplate(w, templateChangePwd, data)
 }
 
@@ -4425,7 +4439,7 @@ func (s *httpdServer) handleOAuth2TokenRedirect(w http.ResponseWriter, r *http.R
 
 	cfg := oauth2Config.GetOAuth2()
 	cfg.RedirectURL = pendingAuth.RedirectURL
-	token, err := cfg.Exchange(ctx, r.URL.Query().Get("code"))
+	token, err := cfg.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(pendingAuth.Verifier))
 	if err != nil {
 		s.renderMessagePage(w, r, util.I18nOAuth2ErrorTitle, http.StatusInternalServerError,
 			util.NewI18nError(err, util.I18nOAuth2ErrTokenExchange), "")

@@ -580,6 +580,12 @@ func TestInitialization(t *testing.T) {
 		assert.Contains(t, err.Error(), "oidc")
 	}
 	httpdConf.Bindings[0].OIDC = httpd.OIDC{}
+	httpdConf.Bindings[0].BaseURL = "ftp://127.0.0.1"
+	err = httpdConf.Initialize(configDir, isShared)
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "URL schema")
+	}
+	httpdConf.Bindings[0].BaseURL = ""
 	httpdConf.Bindings[0].EnableWebClient = true
 	httpdConf.Bindings[0].EnableWebAdmin = true
 	httpdConf.Bindings[0].EnableRESTAPI = true
@@ -629,72 +635,6 @@ func TestInitialization(t *testing.T) {
 	assert.NoError(t, err)
 	providerConf := config.GetProviderConf()
 	err = dataprovider.Initialize(providerConf, configDir, true)
-	assert.NoError(t, err)
-}
-
-func TestMigrateEventActionPlaceholders(t *testing.T) {
-	if config.GetProviderConf().Driver == dataprovider.MemoryDataProviderName {
-		t.Skip("this test is not supported with the memory provider")
-	}
-	// Add some event actions using the old placeholders syntax
-	a1 := dataprovider.BaseEventAction{
-		Name: xid.New().String(),
-		Type: dataprovider.ActionTypeEmail,
-		Options: dataprovider.BaseEventActionOptions{
-			EmailConfig: dataprovider.EventActionEmailConfig{
-				Recipients: []string{"failure@example.com"},
-				Subject:    `Failed "{{Event}}" from "{{Name}}"`,
-				Body:       "Object name: {{ObjectName}} object type: {{ObjectType}}, IP: {{IP}}",
-			},
-		},
-	}
-	a2 := dataprovider.BaseEventAction{
-		Name: xid.New().String(),
-		Type: dataprovider.ActionTypeFilesystem,
-		Options: dataprovider.BaseEventActionOptions{
-			FsConfig: dataprovider.EventActionFilesystemConfig{
-				Type: dataprovider.FilesystemActionRename,
-				Renames: []dataprovider.RenameConfig{
-					{
-						KeyValue: dataprovider.KeyValue{
-							Key:   "/{{VirtualDirPath}}/{{ObjectName}}",
-							Value: "/{{ObjectName}}_renamed",
-						},
-					},
-				},
-			},
-		},
-	}
-	action1, _, err := httpdtest.AddEventAction(a1, http.StatusCreated)
-	assert.NoError(t, err)
-	action2, _, err := httpdtest.AddEventAction(a2, http.StatusCreated)
-	assert.NoError(t, err)
-	// Revert the database to the previous version.
-	err = dataprovider.Close()
-	assert.NoError(t, err)
-	err = config.LoadConfig(configDir, "")
-	assert.NoError(t, err)
-	providerConf := config.GetProviderConf()
-	err = dataprovider.RevertDatabase(providerConf, configDir, 29)
-	assert.NoError(t, err)
-	// Close and initialize.
-	err = dataprovider.Close()
-	assert.NoError(t, err)
-	err = dataprovider.Initialize(providerConf, configDir, true)
-	assert.NoError(t, err)
-	// Check that actions are migrated.
-	action1Get, _, err := httpdtest.GetEventActionByName(action1.Name, http.StatusOK)
-	assert.NoError(t, err)
-	action2Get, _, err := httpdtest.GetEventActionByName(action2.Name, http.StatusOK)
-	assert.NoError(t, err)
-	assert.Equal(t, `Failed "{{.Event}}" from "{{.Name}}"`, action1Get.Options.EmailConfig.Subject)
-	assert.Equal(t, `Object name: {{.ObjectName}} object type: {{.ObjectType}}, IP: {{.IP}}`, action1Get.Options.EmailConfig.Body)
-	assert.Equal(t, `/{{.VirtualDirPath}}/{{.ObjectName}}`, action2Get.Options.FsConfig.Renames[0].Key)
-	assert.Equal(t, `/{{.ObjectName}}_renamed`, action2Get.Options.FsConfig.Renames[0].Value)
-	// Clenup.
-	_, err = httpdtest.RemoveEventAction(action1, http.StatusOK)
-	assert.NoError(t, err)
-	_, err = httpdtest.RemoveEventAction(action2, http.StatusOK)
 	assert.NoError(t, err)
 }
 
@@ -1121,6 +1061,13 @@ func TestSortRelatedGroups(t *testing.T) {
 	assert.NoError(t, err)
 
 	u := getTestUser()
+	u.Groups = []sdk.GroupMapping{
+		{
+			Name: name1,
+		},
+	}
+	_, _, err = httpdtest.AddUser(u, http.StatusBadRequest)
+	assert.NoError(t, err)
 	u.Groups = []sdk.GroupMapping{
 		{
 			Name: name1,
@@ -2146,7 +2093,7 @@ func TestIPListEntriesValidation(t *testing.T) {
 }
 
 func TestBasicActionRulesHandling(t *testing.T) {
-	actionName := "test action"
+	actionName := "test_action"
 	a := dataprovider.BaseEventAction{
 		Name:        actionName,
 		Description: "test description",
@@ -2286,7 +2233,7 @@ func TestBasicActionRulesHandling(t *testing.T) {
 	assert.Equal(t, defaultPassword, dbAction.Options.HTTPConfig.Password.GetPayload())
 
 	r := dataprovider.EventRule{
-		Name:        "test rule name",
+		Name:        "test_rule_name",
 		Status:      1,
 		Description: "",
 		Trigger:     dataprovider.EventTriggerFsEvent,
@@ -2548,7 +2495,7 @@ func TestActionRuleRelations(t *testing.T) {
 }
 
 func TestOnDemandEventRules(t *testing.T) {
-	ruleName := "test on demand rule"
+	ruleName := "test_on_demand_rule"
 	a := dataprovider.BaseEventAction{
 		Name:    "a",
 		Type:    dataprovider.ActionTypeBackup,
@@ -2589,7 +2536,7 @@ func TestOnDemandEventRules(t *testing.T) {
 }
 
 func TestIDPLoginEventRule(t *testing.T) {
-	ruleName := "test IDP login rule"
+	ruleName := "test_IDP_login_rule"
 	a := dataprovider.BaseEventAction{
 		Name: "a",
 		Type: dataprovider.ActionTypeIDPAccountCheck,
@@ -3790,7 +3737,14 @@ func TestMustChangePasswordRequirement(t *testing.T) {
 	req.RequestURI = webClientFilesPath
 	setJWTCookieForReq(req, webToken)
 	rr = executeRequest(req)
-	checkResponseCode(t, http.StatusForbidden, rr)
+	checkResponseCode(t, http.StatusFound, rr)
+	assert.Equal(t, webChangeClientPwdPath, rr.Header().Get("Location"))
+	req, err = http.NewRequest(http.MethodGet, webChangeClientPwdPath, nil)
+	assert.NoError(t, err)
+	req.RequestURI = webChangeClientPwdPath
+	setJWTCookieForReq(req, webToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
 	assert.Contains(t, rr.Body.String(), util.I18nErrorChangePwdRequired)
 	// change pwd
 	pwd := make(map[string]string)
@@ -3835,7 +3789,15 @@ func TestMustChangePasswordRequirement(t *testing.T) {
 	req.RequestURI = webClientFilesPath
 	setJWTCookieForReq(req, webToken)
 	rr = executeRequest(req)
-	checkResponseCode(t, http.StatusForbidden, rr)
+	checkResponseCode(t, http.StatusFound, rr)
+	assert.Equal(t, webChangeClientPwdPath, rr.Header().Get("Location"))
+	req, err = http.NewRequest(http.MethodGet, webChangeClientPwdPath, nil)
+	assert.NoError(t, err)
+	req.RequestURI = webChangeClientPwdPath
+	setJWTCookieForReq(req, webToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
+	assert.Contains(t, rr.Body.String(), util.I18nErrorChangePwdRequired)
 
 	csrfToken, err := getCSRFTokenFromInternalPageMock(webChangeClientPwdPath, webToken)
 	assert.NoError(t, err)
@@ -3898,7 +3860,14 @@ func TestTwoFactorRequirements(t *testing.T) {
 	req.RequestURI = webClientFilesPath
 	setJWTCookieForReq(req, webToken)
 	rr = executeRequest(req)
-	checkResponseCode(t, http.StatusForbidden, rr)
+	checkResponseCode(t, http.StatusFound, rr)
+	assert.Equal(t, webClientMFAPath, rr.Header().Get("Location"))
+	req, err = http.NewRequest(http.MethodGet, webClientMFAPath, nil)
+	assert.NoError(t, err)
+	req.RequestURI = webClientMFAPath
+	setJWTCookieForReq(req, webToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
 	assert.Contains(t, rr.Body.String(), util.I18nError2FARequired)
 
 	configName, key, _, err := mfa.GenerateTOTPSecret(mfa.GetAvailableTOTPConfigNames()[0], user.Username)
@@ -3984,7 +3953,14 @@ func TestTwoFactorRequirementsGroupLevel(t *testing.T) {
 	req.RequestURI = webClientFilesPath
 	setJWTCookieForReq(req, webToken)
 	rr := executeRequest(req)
-	checkResponseCode(t, http.StatusForbidden, rr)
+	checkResponseCode(t, http.StatusFound, rr)
+	assert.Equal(t, webClientMFAPath, rr.Header().Get("Location"))
+	req, err = http.NewRequest(http.MethodGet, webClientMFAPath, nil)
+	assert.NoError(t, err)
+	req.RequestURI = webClientMFAPath
+	setJWTCookieForReq(req, webToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
 	assert.Contains(t, rr.Body.String(), util.I18nError2FARequired)
 
 	req, err = http.NewRequest(http.MethodGet, userDirsPath, nil)
@@ -4121,7 +4097,15 @@ func TestAdminMustChangePasswordRequirement(t *testing.T) {
 	req.RequestURI = webUsersPath
 	setJWTCookieForReq(req, webToken)
 	rr := executeRequest(req)
-	checkResponseCode(t, http.StatusForbidden, rr)
+	checkResponseCode(t, http.StatusFound, rr)
+	assert.Equal(t, webChangeAdminPwdPath, rr.Header().Get("Location"))
+	req, err = http.NewRequest(http.MethodGet, webChangeAdminPwdPath, nil)
+	assert.NoError(t, err)
+	req.RequestURI = webChangeAdminPwdPath
+	setJWTCookieForReq(req, webToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
+	assert.Contains(t, rr.Body.String(), util.I18nErrorChangePwdRequired)
 	// The change password page should be accessible, we get the CSRF from it.
 	csrfToken, err := getCSRFTokenFromInternalPageMock(webChangeAdminPwdPath, webToken)
 	assert.NoError(t, err)
@@ -4181,7 +4165,14 @@ func TestAdminTwoFactorRequirements(t *testing.T) {
 	req.RequestURI = webFoldersPath
 	setJWTCookieForReq(req, webToken)
 	rr = executeRequest(req)
-	checkResponseCode(t, http.StatusForbidden, rr)
+	checkResponseCode(t, http.StatusFound, rr)
+	assert.Equal(t, webAdminMFAPath, rr.Header().Get("Location"))
+	req, err = http.NewRequest(http.MethodGet, webAdminMFAPath, nil)
+	assert.NoError(t, err)
+	req.RequestURI = webAdminMFAPath
+	setJWTCookieForReq(req, webToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
 	assert.Contains(t, rr.Body.String(), util.I18nError2FARequiredGeneric)
 	// add TOTP config
 	configName, key, _, err := mfa.GenerateTOTPSecret(mfa.GetAvailableTOTPConfigNames()[0], altAdminUsername)
@@ -7929,7 +7920,7 @@ func TestProviderErrors(t *testing.T) {
 	backupData = dataprovider.BackupData{
 		EventActions: []dataprovider.BaseEventAction{
 			{
-				Name: "quota reset",
+				Name: "quota_reset",
 				Type: dataprovider.ActionTypeFolderQuotaReset,
 			},
 		},
@@ -7944,7 +7935,7 @@ func TestProviderErrors(t *testing.T) {
 	backupData = dataprovider.BackupData{
 		EventRules: []dataprovider.EventRule{
 			{
-				Name:    "quota reset",
+				Name:    "quota_reset",
 				Trigger: dataprovider.EventTriggerSchedule,
 				Conditions: dataprovider.EventConditions{
 					Schedules: []dataprovider.Schedule{
@@ -8738,7 +8729,7 @@ func TestLoaddata(t *testing.T) {
 	}
 	action := dataprovider.BaseEventAction{
 		ID:   81,
-		Name: "test restore action",
+		Name: "test_restore_action",
 		Type: dataprovider.ActionTypeHTTP,
 		Options: dataprovider.BaseEventActionOptions{
 			HTTPConfig: dataprovider.EventActionHTTPConfig{
@@ -8754,7 +8745,7 @@ func TestLoaddata(t *testing.T) {
 	}
 	rule := dataprovider.EventRule{
 		ID:          100,
-		Name:        "test rule restore",
+		Name:        "test_rule_restore",
 		Description: "",
 		Trigger:     dataprovider.EventTriggerFsEvent,
 		Conditions: dataprovider.EventConditions{
@@ -9119,7 +9110,7 @@ func TestLoaddataMode(t *testing.T) {
 	}
 	action := dataprovider.BaseEventAction{
 		ID:          81,
-		Name:        "test restore action data mode",
+		Name:        "test_restore_action_data_mode",
 		Description: "action desc",
 		Type:        dataprovider.ActionTypeHTTP,
 		Options: dataprovider.BaseEventActionOptions{
@@ -9136,7 +9127,7 @@ func TestLoaddataMode(t *testing.T) {
 	}
 	rule := dataprovider.EventRule{
 		ID:          100,
-		Name:        "test rule restore data mode",
+		Name:        "test_rule_restore_data_mode",
 		Description: "rule desc",
 		Trigger:     dataprovider.EventTriggerFsEvent,
 		Conditions: dataprovider.EventConditions{
@@ -9643,7 +9634,7 @@ func TestEventRuleErrorsMock(t *testing.T) {
 	checkResponseCode(t, http.StatusBadRequest, rr)
 
 	a := dataprovider.BaseEventAction{
-		Name:        "action name",
+		Name:        "action_name",
 		Description: "test description",
 		Type:        dataprovider.ActionTypeBackup,
 		Options:     dataprovider.BaseEventActionOptions{},
@@ -9658,7 +9649,7 @@ func TestEventRuleErrorsMock(t *testing.T) {
 	checkResponseCode(t, http.StatusBadRequest, rr)
 
 	r := dataprovider.EventRule{
-		Name:    "test event rule",
+		Name:    "test_event_rule",
 		Trigger: dataprovider.EventTriggerSchedule,
 		Conditions: dataprovider.EventConditions{
 			Schedules: []dataprovider.Schedule{
@@ -12052,7 +12043,14 @@ func TestPermGroupOverride(t *testing.T) {
 	req.RequestURI = webClientFilesPath
 	setJWTCookieForReq(req, webToken)
 	rr = executeRequest(req)
-	checkResponseCode(t, http.StatusForbidden, rr)
+	checkResponseCode(t, http.StatusFound, rr)
+	assert.Equal(t, webClientMFAPath, rr.Header().Get("Location"))
+	req, err = http.NewRequest(http.MethodGet, webClientMFAPath, nil)
+	assert.NoError(t, err)
+	req.RequestURI = webClientMFAPath
+	setJWTCookieForReq(req, webToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
 	assert.Contains(t, rr.Body.String(), util.I18nError2FARequired)
 
 	_, err = httpdtest.RemoveUser(user, http.StatusOK)
@@ -15599,7 +15597,7 @@ func TestShareMaxSessions(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "too many open sessions")
 
 	share = dataprovider.Share{
-		Name:  "test share max sessions read/write",
+		Name:  "test share max sessions read&write",
 		Scope: dataprovider.ShareScopeReadWrite,
 		Paths: []string{"/"},
 	}
@@ -25497,78 +25495,6 @@ func TestWebRole(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestNameParamSingleSlash(t *testing.T) {
-	err := dataprovider.Close()
-	assert.NoError(t, err)
-	err = config.LoadConfig(configDir, "")
-	assert.NoError(t, err)
-	providerConf := config.GetProviderConf()
-	providerConf.NamingRules = 5
-	err = dataprovider.Initialize(providerConf, configDir, true)
-	assert.NoError(t, err)
-
-	webToken, err := getJWTWebTokenFromTestServer(defaultTokenAuthUser, defaultTokenAuthPass)
-	assert.NoError(t, err)
-	apiToken, err := getJWTAPITokenFromTestServer(defaultTokenAuthUser, defaultTokenAuthPass)
-	assert.NoError(t, err)
-	csrfToken, err := getCSRFTokenFromInternalPageMock(webGroupPath, webToken)
-	assert.NoError(t, err)
-	group := getTestGroup()
-	group.Name = "/"
-	form := make(url.Values)
-	form.Set("name", group.Name)
-	form.Set("description", group.Description)
-	form.Set("max_sessions", "0")
-	form.Set("quota_files", "0")
-	form.Set("quota_size", "0")
-	form.Set("upload_bandwidth", "0")
-	form.Set("download_bandwidth", "0")
-	form.Set("upload_data_transfer", "0")
-	form.Set("download_data_transfer", "0")
-	form.Set("total_data_transfer", "0")
-	form.Set("max_upload_file_size", "0")
-	form.Set("default_shares_expiration", "0")
-	form.Set("max_shares_expiration", "0")
-	form.Set("password_expiration", "0")
-	form.Set("password_strength", "0")
-	form.Set("expires_in", "0")
-	form.Set("external_auth_cache_time", "0")
-	form.Set(csrfFormToken, csrfToken)
-	b, contentType, err := getMultipartFormData(form, "", "")
-	assert.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, webGroupPath, &b)
-	assert.NoError(t, err)
-	req.Header.Set("Content-Type", contentType)
-	setJWTCookieForReq(req, webToken)
-	rr := executeRequest(req)
-	checkResponseCode(t, http.StatusSeeOther, rr)
-
-	groupGet, _, err := httpdtest.GetGroupByName(group.Name, http.StatusOK)
-	assert.NoError(t, err)
-	assert.Equal(t, "/", groupGet.Name)
-	// check strip slash
-	req, err = http.NewRequest(http.MethodGet, webGroupsPath+"/", nil)
-	assert.NoError(t, err)
-	setJWTCookieForReq(req, webToken)
-	rr = executeRequest(req)
-	checkResponseCode(t, http.StatusOK, rr)
-	// cleanup
-	req, err = http.NewRequest(http.MethodDelete, groupPath+"/"+url.PathEscape(group.Name), nil)
-	assert.NoError(t, err)
-	setBearerForReq(req, apiToken)
-	rr = executeRequest(req)
-	checkResponseCode(t, http.StatusOK, rr)
-
-	err = dataprovider.Close()
-	assert.NoError(t, err)
-	err = config.LoadConfig(configDir, "")
-	assert.NoError(t, err)
-	providerConf = config.GetProviderConf()
-	providerConf.BackupsPath = backupsPath
-	err = dataprovider.Initialize(providerConf, configDir, true)
-	assert.NoError(t, err)
-}
-
 func TestAddWebGroup(t *testing.T) {
 	webToken, err := getJWTWebTokenFromTestServer(defaultTokenAuthUser, defaultTokenAuthPass)
 	assert.NoError(t, err)
@@ -27314,6 +27240,56 @@ func TestSecondFactorRequirements(t *testing.T) {
 	assert.False(t, user.MustSetSecondFactorForProtocol(common.ProtocolFTP))
 	assert.False(t, user.MustSetSecondFactorForProtocol(common.ProtocolHTTP))
 	assert.False(t, user.MustSetSecondFactorForProtocol(common.ProtocolSSH))
+}
+
+func TestIsNameValid(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"simple name", "user", true},
+		{"alphanumeric", "User123", true},
+		{"unicode allowed", "你好", true},
+		{"emoji allowed", "user😊", true},
+		{"name with dot", "file.txt", true},
+		{"name with multiple dots", "archive.tar.gz", true},
+		{"control char", "abc\u0001", false},
+		{"newline", "abc\n", false},
+		{"tab", "abc\t", false},
+		{"slash", "user/name", false},
+		{"backslash", "user\\name", false},
+		{"colon", "user:name", false},
+		{"single dot", ".", false},
+		{"double dot", "..", false},
+		{"dot with suffix allowed", ".hidden", true},
+		{"name ending with dot", "file.", false},
+		{"name ending with space", "file ", false},
+		{"CON", "CON", false},
+		{"con lowercase", "con", false},
+		{"con with extension", "con.txt", false},
+		{"LPT1", "LPT1", false},
+		{"lpt1 lowercase", "lpt1", false},
+		{"COM5 uppercase", "COM5", false},
+		{"com9 with extension", "com9.log", false},
+		{"NUL", "NUL", false},
+		{"Valid because suffix changes base", "con123", true},
+		{"base name split", "aux.pdf", false},
+		{"valid long name", "auxiliary", true},
+		{"space only", " ", false},
+		{"dot inside", "ab.cd.ef", true},
+		{"unicode that ends with dot", "你好.", false},
+		{"unicode that ends with space", "你好 ", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.IsNameValid(tt.input)
+			if result != tt.expected {
+				t.Errorf("IsNameValid(%q) = %v, expected %v", tt.input, result, tt.expected)
+			}
+		})
+	}
 }
 
 func startOIDCMockServer() {

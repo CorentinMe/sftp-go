@@ -22,6 +22,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -1587,7 +1588,7 @@ func (u *User) mergeCryptFsConfig(group *Group) {
 
 func (u *User) mergeWithPrimaryGroup(group *Group, replacer *strings.Replacer) {
 	if group.UserSettings.HomeDir != "" {
-		u.HomeDir = u.replacePlaceholder(group.UserSettings.HomeDir, replacer)
+		u.HomeDir = filepath.Clean(u.replacePlaceholder(group.UserSettings.HomeDir, replacer))
 	}
 	if group.UserSettings.FsConfig.Provider != 0 {
 		u.FsConfig = u.replaceFsConfigPlaceholders(group.UserSettings.FsConfig, replacer)
@@ -1762,6 +1763,17 @@ func (u *User) hasRole(role string) bool {
 		return true
 	}
 	return role == u.Role
+}
+
+func (u *User) applyNamingRules() {
+	u.Username = config.convertName(u.Username)
+	u.Role = config.convertName(u.Role)
+	for idx := range u.Groups {
+		u.Groups[idx].Name = config.convertName(u.Groups[idx].Name)
+	}
+	for idx := range u.VirtualFolders {
+		u.VirtualFolders[idx].Name = config.convertName(u.VirtualFolders[idx].Name)
+	}
 }
 
 func (u *User) getACopy() User {

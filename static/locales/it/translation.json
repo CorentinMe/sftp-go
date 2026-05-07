@@ -109,6 +109,7 @@
     },
     "general": {
         "invalid_auth_request": "La richiesta di autenticazione non soddisfa i requisiti di sicurezza",
+        "invalid_input": "Input non valido. Gli slash (/), i due punti (:), i caratteri di controllo e i nomi di sistema riservati non sono consentiti",
         "error400": "La richiesta ricevuta non è valida",
         "error403": "Non si dispone delle autorizzazioni richieste",
         "error404": "La risorsa richiesta non esiste",
@@ -499,7 +500,7 @@
     "user": {
         "view_manage": "Visualizza e gestisci utenti",
         "username_reserved": "Il nome utente specificato è riservato",
-        "username_invalid": "Il nome utente specificato non è valido, sono consentiti i seguenti caratteri: a-zA-Z0-9-_.~",
+        "username_invalid": "Il nome specificato non è valido. Sono consentiti i seguenti caratteri: a-z A-Z 0-9 - _ . ~",
         "home_required": "La directory principale è obbligatoria",
         "home_invalid": "La directory principale deve essere un path assoluto",
         "pub_key_invalid": "Chiave pubblica non valida",

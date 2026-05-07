@@ -541,7 +541,7 @@ func (fs *SFTPFs) Readlink(name string) (string, error) {
 	if err != nil {
 		return resolved, err
 	}
-	resolved = path.Clean(resolved)
+	resolved = path.Clean(strings.ReplaceAll(resolved, "\\", "/"))
 	if !path.IsAbs(resolved) {
 		// we assume that multiple links are not followed
 		resolved = path.Join(path.Dir(name), resolved)
@@ -683,13 +683,23 @@ func (fs *SFTPFs) GetRelativePath(name string) string {
 		rel = ""
 	}
 	if !path.IsAbs(rel) {
-		return "/" + rel
-	}
-	if fs.config.Prefix != "/" {
-		if !strings.HasPrefix(rel, fs.config.Prefix) {
+		// If we have a relative path we assume it is already relative to the virtual root
+		rel = "/" + rel
+	} else if fs.config.Prefix != "/" {
+		prefixDir := fs.config.Prefix
+		if !strings.HasSuffix(prefixDir, "/") {
+			prefixDir += "/"
+		}
+
+		if rel == fs.config.Prefix {
+			rel = "/"
+		} else if after, found := strings.CutPrefix(rel, prefixDir); found {
+			rel = path.Clean("/" + after)
+		} else {
+			// Absolute path outside of the configured prefix
+			fsLog(fs, logger.LevelWarn, "path %q is an absolute path outside %q", name, fs.config.Prefix)
 			rel = "/"
 		}
-		rel = path.Clean("/" + strings.TrimPrefix(rel, fs.config.Prefix))
 	}
 	if fs.mountPath != "" {
 		rel = path.Join(fs.mountPath, rel)
@@ -731,11 +741,11 @@ func (*SFTPFs) HasVirtualFolders() bool {
 // ResolvePath returns the matching filesystem path for the specified virtual path
 func (fs *SFTPFs) ResolvePath(virtualPath string) (string, error) {
 	if fs.mountPath != "" {
-		virtualPath = strings.TrimPrefix(virtualPath, fs.mountPath)
+		if after, found := strings.CutPrefix(virtualPath, fs.mountPath); found {
+			virtualPath = after
+		}
 	}
-	if !path.IsAbs(virtualPath) {
-		virtualPath = path.Clean("/" + virtualPath)
-	}
+	virtualPath = path.Clean("/" + virtualPath)
 	fsPath := fs.Join(fs.config.Prefix, virtualPath)
 	if fs.config.Prefix != "/" && fsPath != "/" {
 		// we need to check if this path is a symlink outside the given prefix
@@ -782,6 +792,7 @@ func (fs *SFTPFs) RealPath(p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	resolved = path.Clean(strings.ReplaceAll(resolved, "\\", "/"))
 	if fs.config.Prefix != "/" {
 		if err := fs.isSubDir(resolved); err != nil {
 			fsLog(fs, logger.LevelError, "Invalid real path resolution, original path %q resolved %q err: %v",
@@ -811,6 +822,7 @@ func (fs *SFTPFs) getRealPath(name string) (string, error) {
 		if err != nil {
 			return name, fmt.Errorf("unable to resolve link to %q: %w", name, err)
 		}
+		resolvedLink = strings.ReplaceAll(resolvedLink, "\\", "/")
 		resolvedLink = path.Clean(resolvedLink)
 		if path.IsAbs(resolvedLink) {
 			name = resolvedLink
@@ -1144,7 +1156,7 @@ func (c *sftpConnection) GetLastActivity() time.Time {
 
 type sftpConnectionsCache struct {
 	scheduler *cron.Cron
-	sync.RWMutex
+	sync.Mutex
 	items map[string]*sftpConnection
 }
 
@@ -1197,30 +1209,24 @@ func (c *sftpConnectionsCache) Get(config *SFTPFsConfig, sessionID string) (*sft
 	}
 }
 
-func (c *sftpConnectionsCache) Remove(key string) {
-	c.Lock()
-	defer c.Unlock()
-
-	if conn, ok := c.items[key]; ok {
-		delete(c.items, key)
-		logger.Debug(logSenderSFTPCache, "", "removed connection with key %s, active connections: %d", key, len(c.items))
-
-		defer conn.Close()
-	}
-}
-
 func (c *sftpConnectionsCache) Cleanup() {
-	c.RLock()
+	c.Lock()
+
+	var connectionsToClose []*sftpConnection
 
 	for k, conn := range c.items {
 		if val := conn.GetLastActivity(); val.Before(time.Now().Add(-30 * time.Second)) {
-			logger.Debug(conn.logSender, "", "removing inactive connection, last activity %s", val)
-
-			defer func(key string) {
-				c.Remove(key)
-			}(k)
+			delete(c.items, k)
+			logger.Debug(logSenderSFTPCache, "", "removed connection with key %s, last activity %s, active connections: %d",
+				k, val, len(c.items))
+			connectionsToClose = append(connectionsToClose, conn)
 		}
 	}
 
-	c.RUnlock()
+	c.Unlock()
+
+	for _, conn := range connectionsToClose {
+		err := conn.Close()
+		logger.Debug(logSenderSFTPCache, "", "connection closed, err: %v", err)
+	}
 }
